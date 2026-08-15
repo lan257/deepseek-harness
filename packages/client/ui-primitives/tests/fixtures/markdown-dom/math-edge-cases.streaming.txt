@@ -3,20 +3,22 @@
     #text "Trusted commands stay off: $\\href{javascript:alert(1)}{unsafe}$."
   <p>
     #text "Unbalanced errors render the error arm: $\\frac{$"
-  <div class="_tableScroll_404681">
-    <table>
-      <thead>
-        <tr>
-          <th>
-            #text "Symbol"
-          <th>
-            #text "Value"
-      <tbody>
-        <tr>
-          <td>
-            #text "$\\theta$"
-          <td>
-            #text "(\\frac{1}{5})"
+  <div class="_tableFrame_404681">
+    <div class="_tableScroll_404681">
+      <table>
+        <thead>
+          <tr>
+            <th>
+              #text "Symbol"
+            <th>
+              #text "Value"
+        <tbody>
+          <tr>
+            <td>
+              #text "$\\theta$"
+            <td>
+              #text "(\\frac{1}{5})"
+    <div aria-label="调整表格宽度" aria-orientation="vertical" class="_tableResizeHandle_404681" role="separator" tabindex="0" title="拖动调整宽度，双击恢复默认">
   <div class="_block_9aea57 md-code-block">
     <div class="_bannerWrap_9aea57">
       <div class="_banner_9aea57">

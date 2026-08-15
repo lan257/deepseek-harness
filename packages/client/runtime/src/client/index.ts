@@ -100,6 +100,12 @@ export { PendingWait } from './sessions/pending.ts'
 export type {
   PendingInteraction, PendingInteractionStatus, PendingKind, PendingPayloads,
 } from './sessions/pending.ts'
+// Cross-session pending approval material (the approval-center feed), exposed
+// through the sessions list snapshot and answered by ctx.sessions.respondApproval.
+export type { PendingApprovalView } from './sessions/manager.ts'
+// Cross-session notification feed (the right-sidebar message center), exposed
+// through the sessions list snapshot.
+export type { NotificationItem, NotificationJobStatus } from './sessions/manager.ts'
 // Projection value store (push model; see the session-projection subsystem
 // page, docs/subsystems/session-projection.md): host-computed
 // whole values per key; domains ship projection support with zero client code.

@@ -2716,6 +2716,28 @@ export interface Config {
 
 Source: [`packages/todo/tool-todo/src/index.ts:29`](../packages/todo/tool-todo/src/index.ts)
 
+<a id="deepseek-aidsh-tool-vision"></a>
+
+## `@deepseek-ai/dsh-tool-vision`
+
+Requires: `tools`
+
+```ts config-catalog
+/** Deployment-facing configuration for the vision tool consumer. */
+export interface Config {
+  /** Python interpreter used to run the bundled vision script. */
+  pythonPath: string
+  /** Absolute script path override; empty uses the script bundled with this package. */
+  scriptPath: string
+  /** Per-request timeout in milliseconds, also passed to the script as its request timeout. */
+  timeoutMs: number
+  /** Model the script calls when the model argument is omitted. */
+  defaultModel: string
+}
+```
+
+Source: [`packages/vision/tool-vision/src/index.ts:23`](../packages/vision/tool-vision/src/index.ts)
+
 <a id="deepseek-aidsh-tool-web"></a>
 
 ## `@deepseek-ai/dsh-tool-web`

@@ -31,8 +31,9 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: >-
-      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+    text: |-
+      你是一个由 {{model}} 模型驱动的编码智能体，工作目录是 {{cwd}}。
+      请始终使用中文进行内部思考（thinking），并默认用中文回复；代码、命令、文件路径和专有名词保留原文。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'

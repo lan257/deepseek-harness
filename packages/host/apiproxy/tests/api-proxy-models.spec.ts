@@ -6,6 +6,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -194,6 +197,60 @@ describe('Web session model selection', () => {
     })
     expect(saveImage).toHaveBeenCalledTimes(2)
     await ctx.fiber.dispose()
+  })
+
+  it('accepts an image prompt on a text-only route by exporting the images as file paths', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTextOnly(ctx)
+    const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())
+    const saveImage = vi.fn(() => Promise.reject(new Error('text-only route must never persist an image attachment')))
+    ctx.provide('attachments', {
+      imageLimits: {
+        maxImageBytes: 1024,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 1024,
+        maxImagePixels: 1024,
+        mediaTypes: ['image/png'],
+      },
+      validateImage,
+      saveImage,
+    } as never)
+    const previousDshHome = process.env.DSH_HOME
+    const dshHome = await mkdtemp(join(tmpdir(), 'dsh-apiproxy-image-export-'))
+    process.env.DSH_HOME = dshHome
+    const followup = vi.fn()
+    Object.assign(agent, { followup })
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'text-only', model: 'plain' }),
+      cwd: '/tmp',
+    })
+    try {
+      const result = await api.sessions.prompt(request({
+        sessionId, mode: 'queue' as const,
+        content: [
+          { type: 'image' as const, mediaType: 'image/png' as const, data: 'AQIDBA==', name: 'shot.png' },
+          { type: 'text' as const, text: '看看这张图' },
+        ],
+      }))
+      expect(result.result.ok).toBe(true)
+      expect(validateImage).toHaveBeenCalledTimes(1)
+      expect(saveImage).not.toHaveBeenCalled()
+      const message = followup.mock.calls[0]?.[0] as UserMessage
+      expect(message.content).toHaveLength(2)
+      const pathBlock = message.content[0] as { type: 'text'; text: string }
+      expect(pathBlock.text).toContain('用户粘贴的图片已保存为文件')
+      expect(pathBlock.text).toContain('.png')
+      const match = /([A-Za-z]:[^\]]+\.png)/.exec(pathBlock.text)
+      expect(match).not.toBeNull()
+      const exported = await readFile(match![1]!)
+      expect([...exported]).toEqual([1, 2, 3, 4])
+      expect(message.content[1]).toEqual({ type: 'text', text: '看看这张图' })
+    } finally {
+      if (previousDshHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousDshHome
+      await rm(dshHome, { recursive: true, force: true })
+      await ctx.fiber.dispose()
+    }
   })
 
   it('refuses a text-only selection while durable or pending image content remains visible', async () => {

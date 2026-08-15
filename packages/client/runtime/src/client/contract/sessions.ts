@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  RpcResult, SessionId, SubagentAddress,
+  RpcReceipt, RpcResult, SessionId, SubagentAddress,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AgentContext } from '../agents/scope.ts'
@@ -44,6 +44,14 @@ export interface ISessions {
    * @param address - catalog-derived parent and child ids.
    */
   openSubagent(address: SubagentAddress): void
+  /**
+   * Answer one pending approval from any surface (the approval center); the
+   * owning session need not be the one in view.
+   * @param key - the stable approval identity (`a:<approvalId>`).
+   * @param outcome - the only two client-answerable outcomes.
+   * @returns the carrier receipt.
+   */
+  respondApproval(key: string, outcome: 'allowed-once' | 'rejected'): Promise<RpcReceipt>
   /**
    * Resolve an already discovered direct-parent address without opening it.
    * @param id - possible addressed child id.

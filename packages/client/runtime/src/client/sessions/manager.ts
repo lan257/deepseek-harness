@@ -3,7 +3,7 @@
 // List data never enters zustand; React connects via subscribe/getListSnapshot.
 
 import type {
-  IApiClient, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
+  ApprovalRequestId, IApiClient, HostFrame, MuxFrame, RpcError, RpcReceipt, RpcRequest, RpcResult, SessionId,
   SessionSummary, SubagentAddress, SubagentCatalog, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
@@ -52,6 +52,61 @@ export interface SessionListSnapshot {
   /** Background jobs per session; an absent key is an empty set. */
   jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
   currentAddress: SubagentAddress | undefined
+  /**
+   * Cross-session pending approvals (the approval-center feed): every live
+   * `approval/requested` with its domain fields, instantiated session or
+   * not. Answers travel through {@link SessionManager.respondApproval} by
+   * stable key; the list drops an entry when its `approval/resolved` lands.
+   * Absent on snapshots older than the approval mirror.
+   */
+  pendingApprovals?: readonly PendingApprovalView[]
+  /**
+   * Cross-session notification feed (the right-sidebar message center):
+   * pending approvals, settled background jobs, and agent errors, newest
+   * first, capped. Absent on snapshots older than the notification mirror.
+   */
+  notifications?: readonly NotificationItem[]
+}
+
+/** Job settlement outcomes the notification center surfaces. */
+export type NotificationJobStatus = 'completed' | 'killed' | 'failed'
+
+/** One cross-session notification as the right-sidebar message center renders it. */
+export interface NotificationItem {
+  /** Stable identity; re-pushes of the same event replace by id (replay-safe). */
+  readonly id: string
+  /** Owning session (title lookup for the row label). */
+  readonly sessionId: SessionId
+  /** The event class the row renders. */
+  readonly kind: 'approval' | 'job-settled' | 'agent-error'
+  /** Arrival epoch ms (row sort key; new first). */
+  readonly time: number
+  /** One-line description: the job's label (job-settled) or the agent error message. */
+  readonly detail?: string
+  /** Job settlement outcome (job-settled). */
+  readonly status?: NotificationJobStatus
+  /** The approval was answered (kind approval) — kept as history, no longer actionable. */
+  readonly resolved?: boolean
+  /** Actionable approval material (kind approval while unanswered). */
+  readonly approval?: PendingApprovalView
+}
+
+/** One cross-session pending approval as the approval center renders it: the requested frame's
+ *  domain fields plus the stable identity that answers it. Manager-owned (never read off Session
+ *  instances) so approvals of sessions never instantiated still surface. */
+export interface PendingApprovalView {
+  /** Owning session (title lookup for the row label). */
+  readonly sessionId: SessionId
+  /** The core audit correlation; echoed back verbatim in the answer payload. */
+  readonly approvalId: ApprovalRequestId
+  /** The tool the question is about (headline fallback). */
+  readonly toolName: string
+  /** The paired tool call's id when the ask names one (deep-link candidate). */
+  readonly callId?: string
+  /** The asker's human-readable WHY. */
+  readonly reason?: string
+  /** Stable identity (`a:<approvalId>`), the {@link SessionManager.respondApproval} key. */
+  readonly key: string
 }
 
 /** One parent-addressed durable catalog projected through the sessions snapshot. */
@@ -102,6 +157,9 @@ function questionInteractionStatus(
   return options.some(option => option.label === intent.approve) ? 'plan-review' : 'question'
 }
 
+/** The notification center keeps the newest this many items. */
+const NOTIFICATION_CAP = 50
+
 /** Instance cluster + frame entry + the session list. */
 export class SessionManager {
   private readonly sessions = new Map<SessionId, Session>()
@@ -114,6 +172,18 @@ export class SessionManager {
    *  sessions never instantiated. Cleared per connection generation — the reopen replay re-adds
    *  still-pending requests — and on session-removed. */
   private readonly pendingInteractions = new Map<SessionId, Map<string, PendingInteractionStatus>>()
+  /** Approval-center material: pending approval views per session, keyed by the same stable
+   *  `a:<approvalId>` identities as {@link pendingInteractions}. Kept in parallel because the
+   *  status map carries no domain fields; both derive from the same requested/resolved frames.
+   *  Cleared per connection generation (replay re-adds still-pending requests) and on
+   *  session-removed. */
+  private readonly approvalViews = new Map<SessionId, Map<string, PendingApprovalView>>()
+  /** Notification-center feed, newest first, capped at {@link NOTIFICATION_CAP}. */
+  private notifications: NotificationItem[] = []
+  /** Last-observed job status per session/job, for running→settled migration detection. */
+  private readonly prevJobStatus = new Map<SessionId, Map<string, JobView['status']>>()
+  /** Agent-error sequence, minting unique notification ids (the frame carries no seq). */
+  private errorSeq = 0
   /**
    * Sessions that finished running while not selected — the sidebar's green
    * "done" reminder (manager-owned, survives connection generations; cleared
@@ -672,6 +742,112 @@ export class SessionManager {
     this.notifier.markDirty()
   }
 
+  /** Add or refresh one approval-center view (idempotent on replay; sibling status is the change signal). */
+  private upsertApprovalView(sessionId: SessionId, view: PendingApprovalView): void {
+    let views = this.approvalViews.get(sessionId)
+    if (views === undefined) {
+      views = new Map()
+      this.approvalViews.set(sessionId, views)
+    }
+    if (views.get(view.key) === view) return
+    views.set(view.key, view)
+    this.notifier.markDirty()
+  }
+
+  /** Drop one approval-center view without disturbing sibling views. */
+  private deleteApprovalView(sessionId: SessionId, key: string): void {
+    const views = this.approvalViews.get(sessionId)
+    if (views === undefined || !views.delete(key)) return
+    if (views.size === 0) this.approvalViews.delete(sessionId)
+    this.notifier.markDirty()
+  }
+
+  /**
+   * Answer one pending approval from any surface (the approval center): the
+   * user may be looking at a different session. The response echoes the
+   * requested frame's rpcId through the live Session wait when the session
+   * is instantiated, else through the pre-instantiation buffer's envelope —
+   * the host reconciles by rpcId, so the originating session need not be
+   * open. A missing carrier (already resolved or session dropped) throws.
+   * @param key - the stable approval identity (`a:<approvalId>`).
+   * @param outcome - the only two client-answerable outcomes.
+   * @returns the carrier receipt.
+   */
+  async respondApproval(key: string, outcome: 'allowed-once' | 'rejected'): Promise<RpcReceipt> {
+    for (const [sessionId, views] of this.approvalViews) {
+      const view = views.get(key)
+      if (view === undefined) continue
+      const session = this.sessions.get(sessionId)
+      if (session !== undefined) {
+        const wait = session.pendingApproval(view.approvalId)
+        if (wait !== undefined) {
+          return wait.respond({
+            ok: true,
+            value: { sessionId: wait.sessionId, approvalId: wait.payload.approvalId, outcome },
+          })
+        }
+      }
+      const envelope = this.pendingBuffers.get(sessionId)?.find(item => bufferedRequestKey(item) === key)
+      if (envelope !== undefined) {
+        return this.api.respond({
+          type: 'client-response',
+          rpcId: envelope.rpcId,
+          result: { ok: true, value: { sessionId, approvalId: view.approvalId, outcome } },
+        })
+      }
+      throw new Error(`approval ${key} has no answerable carrier: its session dropped or already resolved it`)
+    }
+    throw new Error(`no pending approval ${key}`)
+  }
+
+  /** Add or refresh one notification (newest first; re-pushes of the same id replace in place). */
+  private pushNotification(item: NotificationItem): void {
+    const at = this.notifications.findIndex(existing => existing.id === item.id)
+    if (at >= 0) this.notifications.splice(at, 1)
+    this.notifications.unshift(item)
+    if (this.notifications.length > NOTIFICATION_CAP) this.notifications.length = NOTIFICATION_CAP
+    this.notifier.markDirty()
+  }
+
+  /** Mark an approval notification answered (kept as history; the row loses its actions). */
+  private resolveApprovalNotification(approvalId: string): void {
+    const at = this.notifications.findIndex(existing => existing.id === `approval:a:${approvalId}`)
+    if (at === -1 || this.notifications[at]?.resolved === true) return
+    this.notifications[at] = { ...this.notifications[at]!, resolved: true }
+    this.notifier.markDirty()
+  }
+
+  /** Detect running→settled job migrations in a whole-set jobs frame and notify each one. */
+  private trackJobSettlements(sessionId: SessionId, jobs: readonly JobView[]): void {
+    const prev = this.prevJobStatus.get(sessionId)
+    const next = new Map<string, JobView['status']>()
+    for (const job of jobs) {
+      next.set(job.id, job.status)
+      const before = prev?.get(job.id)
+      if (before !== 'running') continue
+      if (job.status === 'running' || job.status === 'stopping') continue
+      this.pushNotification({
+        id: `job:${job.id}`,
+        sessionId,
+        kind: 'job-settled',
+        time: Date.now(),
+        detail: job.label,
+        status: job.status,
+      })
+    }
+    this.prevJobStatus.set(sessionId, next)
+  }
+
+  /** Drop every notification and job-status record of a removed session. */
+  private dropSessionNotifications(sessionId: SessionId): void {
+    const kept = this.notifications.filter(item => item.sessionId !== sessionId)
+    if (kept.length !== this.notifications.length) {
+      this.notifications = kept
+      this.notifier.markDirty()
+    }
+    this.prevJobStatus.delete(sessionId)
+  }
+
   // ---- ConnectionController sinks (wired by boot) ----
 
   /**
@@ -708,6 +884,9 @@ export class SessionManager {
       // reports as `[]` — both land as an absent key.
       if (frame.jobs.length === 0) this.jobsBySession.delete(frame.sessionId)
       else this.jobsBySession.set(frame.sessionId, frame.jobs)
+      // The notification center surfaces running→settled migrations (completed,
+      // killed, failed) for every session, instantiated or not.
+      this.trackJobSettlements(frame.sessionId, frame.jobs)
       this.notifier.markDirty()
       return
     }
@@ -737,8 +916,27 @@ export class SessionManager {
     // for every session, instantiated or not; stable keys make replays idempotent.
     if (frame.type === 'approval/requested') {
       this.trackPending(frame.sessionId, `a:${frame.approvalId}`, 'approval')
+      const view: PendingApprovalView = {
+        sessionId: frame.sessionId,
+        approvalId: frame.approvalId,
+        toolName: frame.toolName,
+        ...(frame.callId === undefined ? {} : { callId: frame.callId }),
+        ...(frame.reason === undefined ? {} : { reason: frame.reason }),
+        key: `a:${frame.approvalId}`,
+      }
+      this.upsertApprovalView(frame.sessionId, view)
+      // The message center lists every live approval as an actionable row.
+      this.pushNotification({
+        id: `approval:a:${frame.approvalId}`,
+        sessionId: frame.sessionId,
+        kind: 'approval',
+        time: Date.now(),
+        approval: view,
+      })
     } else if (frame.type === 'approval/resolved') {
       this.resolvePending(frame.sessionId, `a:${frame.approvalId}`)
+      this.deleteApprovalView(frame.sessionId, `a:${frame.approvalId}`)
+      this.resolveApprovalNotification(frame.approvalId)
     } else if (frame.type === 'question/requested') {
       this.trackPending(
         frame.sessionId,
@@ -829,6 +1027,8 @@ export class SessionManager {
         }
         this.pendingBuffers.delete(frame.sessionId) // a removed session's buffered frames must not replay on a future instantiation
         this.pendingInteractions.delete(frame.sessionId) // a removed session cannot wait on anyone
+        this.approvalViews.delete(frame.sessionId) // nor keep an answerable approval in the center
+        this.dropSessionNotifications(frame.sessionId) // its message rows and job-status records die with it
         // Owner disposal already dropped these registry-side, but that lands on
         // the mux stream while this frame rides the host stream, so the two have
         // no relative order. Clearing here makes a detached Activation's rows
@@ -868,6 +1068,14 @@ export class SessionManager {
       }
       case 'host/agent-error': {
         this.sessions.get(frame.sessionId)?.handleAgentError(frame.message)
+        // The message center surfaces every agent failure, instantiated or not.
+        this.pushNotification({
+          id: `error:${++this.errorSeq}`,
+          sessionId: frame.sessionId,
+          kind: 'agent-error',
+          time: Date.now(),
+          detail: frame.message,
+        })
         return // not reflected in the list
       }
       default:
@@ -887,6 +1095,10 @@ export class SessionManager {
   handleDisconnected(): void {
     if (this.pendingInteractions.size > 0) {
       this.pendingInteractions.clear()
+      this.notifier.markDirty()
+    }
+    if (this.approvalViews.size > 0) {
+      this.approvalViews.clear()
       this.notifier.markDirty()
     }
     for (const [sessionId, buffer] of [...this.pendingBuffers]) {
@@ -1038,6 +1250,16 @@ export class SessionManager {
       const status = statuses.find(candidate => candidate !== 'approval') ?? statuses[0]
       if (status !== undefined) pendingInteractions.set(sessionId, status)
     }
+    // The approval-center feed: every pending approval across sessions, in
+    // deterministic (session, key) order for a stable list across re-renders
+    // and replays.
+    const pendingApprovals: PendingApprovalView[] = []
+    for (const views of this.approvalViews.values()) {
+      for (const view of views.values()) pendingApprovals.push(view)
+    }
+    pendingApprovals.sort((a, b) =>
+      a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1
+        : a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
     const fresh = flattenLineage(merged, pendingInteractions, this.completedNotifications)
     const items = fresh.map((entry) => {
       const prev = this.entryCache.get(entry.sessionId)
@@ -1072,6 +1294,9 @@ export class SessionManager {
       subagentsByParent: Object.fromEntries(this.catalogs),
       jobsBySession: Object.fromEntries(this.jobsBySession),
       currentAddress: current === undefined ? undefined : this.addresses.get(current),
+      pendingApprovals,
+      // The message-center feed: newest first, already capped in push order.
+      ...(this.notifications.length === 0 ? {} : { notifications: [...this.notifications] }),
     }
   }
 }

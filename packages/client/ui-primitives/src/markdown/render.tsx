@@ -23,6 +23,8 @@ import type {} from 'mdast-util-math'
 import { normalizeUri } from 'micromark-util-sanitize-uri'
 import { CodeBlock } from './CodeBlock.tsx'
 import { renderTexToReact } from './katex.tsx'
+import { TableBlock } from './TableBlock.tsx'
+import type { MarkdownTableLabels } from './TableBlock.tsx'
 import type { PositionedBlock } from './incremental.ts'
 import css from './MarkdownText.module.css'
 
@@ -123,6 +125,8 @@ export interface MarkdownRenderContext {
   readonly streaming: boolean
   /** Localized fence copy-button labels. */
   readonly codeLabels: MarkdownCodeLabels | undefined
+  /** Localized table width-resize handle copy. */
+  readonly tableLabels: MarkdownTableLabels | undefined
   /** Inline-code file mentions; absent wherever no opener vocabulary exists. */
   readonly fileMentions: MarkdownFileMentions | undefined
   /** Inside an anchor's children: interactive mentions must not nest there. */
@@ -394,7 +398,7 @@ function renderTable(node: Md.Table, key: Key, context: MarkdownRenderContext): 
   const align = node.align ?? null
   const [headRow, ...bodyRows] = node.children
   return (
-    <div key={key} className={css.tableScroll}>
+    <TableBlock key={key} labels={context.tableLabels}>
       <table>
         {headRow !== undefined && <thead>{renderTableRow(headRow, 'th', align, 0, context)}</thead>}
         {bodyRows.length > 0 && (
@@ -403,7 +407,7 @@ function renderTable(node: Md.Table, key: Key, context: MarkdownRenderContext): 
           </tbody>
         )}
       </table>
-    </div>
+    </TableBlock>
   )
 }
 

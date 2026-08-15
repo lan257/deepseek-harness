@@ -16,7 +16,7 @@
  */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type {
-  IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
+  IApiClient, RpcError, RpcReceipt, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -33,7 +33,7 @@ import { createScope, scopeOf as scopeTagOf } from '../agents/scope.ts'
 import type { ConversationRuntime } from './conversation-assembler.ts'
 import { SessionManager } from './manager.ts'
 import type { SessionRemotes } from './remotes.ts'
-import type { SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot } from './manager.ts'
+import type { NotificationItem, SessionListPhase, PendingApprovalView, SessionSearchResultItem, SubagentCatalogSnapshot } from './manager.ts'
 import type { PendingInteractionStatus } from './pending.ts'
 import { SessionProvideChannel } from './provide.ts'
 import type { Session } from './session.ts'
@@ -95,6 +95,17 @@ export interface SessionListState {
   jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
   /** Current session's catalog-derived address, absent on ordinary navigation. */
   currentAddress: SubagentAddress | undefined
+  /**
+   * Cross-session pending approvals (the approval-center feed); empty when
+   * none. Absent on runtime snapshots older than the approval mirror — the
+   * center simply shows no rows.
+   */
+  pendingApprovals?: readonly PendingApprovalView[]
+  /**
+   * Cross-session notification feed (the right-sidebar message center);
+   * absent when empty or on snapshots older than the notification mirror.
+   */
+  notifications?: readonly NotificationItem[]
 }
 
 /** Persisted navigation cell: address survives refresh for correct history routing. */
@@ -302,6 +313,7 @@ export class SessionRuntime implements ISessions {
     this.list = createSnapshotStore<SessionListState>({
       ids: [], byId: {}, current: undefined, phase: 'pending',
       subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
+      pendingApprovals: [],
     })
     // The manager owns wire truth; the store is its projection. Manager
     // notifications are already microtask-batched.
@@ -379,6 +391,18 @@ export class SessionRuntime implements ISessions {
    */
   openSubagent(address: SubagentAddress): void {
     this.manager.selectSubagent(address)
+  }
+
+  /**
+   * Answer one pending approval from any surface (the approval center): the
+   * response rides the requested frame's rpcId, so the owning session need
+   * not be the one in view. See {@link SessionManager.respondApproval}.
+   * @param key - the stable approval identity (`a:<approvalId>`).
+   * @param outcome - the only two client-answerable outcomes.
+   * @returns the carrier receipt.
+   */
+  respondApproval(key: string, outcome: 'allowed-once' | 'rejected'): Promise<RpcReceipt> {
+    return this.manager.respondApproval(key, outcome)
   }
 
   /**
@@ -659,7 +683,7 @@ export class SessionRuntime implements ISessions {
   /** Project the manager's list snapshot into the store (title derivation is display-only). */
   private projectList(): void {
     const {
-      items, current, phase, subagentsByParent, jobsBySession, currentAddress,
+      items, current, phase, subagentsByParent, jobsBySession, currentAddress, pendingApprovals, notifications,
     } = this.manager.getListSnapshot()
     const ids: SessionId[] = []
     const byId: Record<SessionId, SessionSummary> = {}
@@ -729,7 +753,11 @@ export class SessionRuntime implements ISessions {
         ...(currentAddress === undefined ? {} : { subagentAddress: currentAddress }),
       })
     }
-    this.list.set({ ids, byId, current, phase, subagentsByParent, jobsBySession, currentAddress })
+    this.list.set({
+      ids, byId, current, phase, subagentsByParent, jobsBySession, currentAddress,
+      ...(pendingApprovals === undefined ? {} : { pendingApprovals }),
+      ...(notifications === undefined ? {} : { notifications }),
+    })
     this.pruneScopes()
   }
 

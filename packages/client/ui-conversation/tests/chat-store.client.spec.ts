@@ -12,7 +12,9 @@ beforeEach(() => {
 describe('createChatStore', () => {
   it('init shape: empty selection/draft/view', () => {
     const store = createChatStore().create()
-    expect(store.store.getSnapshot()).toEqual({ selection: null, draft: '', view: null, inspect: null })
+    expect(store.store.getSnapshot()).toEqual({
+      selection: null, draft: '', view: null, inspect: null, expandedProcessTurns: {},
+    })
   })
 
   it('actions cover the declared write set', () => {
@@ -33,6 +35,30 @@ describe('createChatStore', () => {
     expect(store.store.getSnapshot().inspect).toEqual({ callId: 'c1' })
     store.actions.setInspect(null)
     expect(store.store.getSnapshot().inspect).toBeNull()
+  })
+
+  it('toggleProcessExpanded flips one turn flag and leaves others untouched', () => {
+    const store = createChatStore().create()
+
+    store.actions.toggleProcessExpanded(3)
+    expect(store.store.getSnapshot().expandedProcessTurns).toEqual({ 3: true })
+
+    store.actions.toggleProcessExpanded(3)
+    expect(store.store.getSnapshot().expandedProcessTurns).toEqual({ 3: false })
+
+    store.actions.toggleProcessExpanded(5)
+    expect(store.store.getSnapshot().expandedProcessTurns).toEqual({ 3: false, 5: true })
+  })
+
+  it('toggleProcessExpanded survives rehydration of a snapshot without the field', () => {
+    // A persisted snapshot from before the field rehydrates without it.
+    localStorage.setItem('dsh.conversation.chat.sess-toggle', JSON.stringify({
+      selection: null, draft: '', view: null, inspect: null,
+    }))
+    const again = createChatStore().create('sess-toggle')
+    expect(again.store.getSnapshot().expandedProcessTurns).toBeUndefined()
+    again.actions.toggleProcessExpanded(7)
+    expect(again.store.getSnapshot().expandedProcessTurns).toEqual({ 7: true })
   })
 
   it('persists per scope key and rehydrates a fresh instance', () => {

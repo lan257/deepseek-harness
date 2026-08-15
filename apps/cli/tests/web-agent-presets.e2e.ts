@@ -29,7 +29,7 @@ const WEB_PATCH = join(REPO_ROOT, 'packages/bundle/web-app/cordis.patch.yml')
 /** The installation anchor whose dependency surface the preset module fallback mirrors. */
 const INSTALL_ANCHOR = join(REPO_ROOT, 'apps/cli/package.json')
 const EXAMPLES_INSTALL_ANCHOR = join(REPO_ROOT, 'examples/package.json')
-const MINIMAL_PROMPT = 'You are a helpful software engineer assistant.'
+const MINIMAL_PROMPT = '你是一个乐于助人的软件工程师助手。请始终使用中文进行内部思考（thinking），并默认用中文回复；代码、命令、文件路径和专有名词保留原文。'
 const MINIMAL_BASH_DESCRIPTION = `Run commands in a bash shell
 * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
 * You don't have access to the internet via this tool.

@@ -41,6 +41,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // Stable per locale revision (t identity changes on switch): a fresh object
   // per render would rebuild MarkdownText's component table every chunk.
   const codeLabels = useMemo(() => ({ copyLabel: t('copy'), copiedLabel: t('copied') }), [t])
+  const tableLabels = useMemo(
+    () => ({ resizeLabel: t('table.resize'), resizeTitle: t('table.resizeTitle') }),
+    [t],
+  )
   const last = blocks.length - 1
   // Tool-call heads render as tool rows in the chat view's grouping pass, so
   // a node that is only those heads (or empty) would paint an empty root
@@ -61,6 +65,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             text={block.text}
             streaming={streaming}
             codeLabels={codeLabels}
+            tableLabels={tableLabels}
             fileMentions={mentions}
           />,
         )

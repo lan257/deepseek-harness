@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## 项目级说明（本项目）
+
+- **本项目完全开源、可自由修改与定制**：修改参考官方教程 <https://deepseek-harness.github.io/deepseek-harness/develop/basic/>。
+- **使用者为本人，中文维护**：只需维护中文，英文可选择性维护；不使用 `pnpm run test:coverage`，统一在 git 提交前测试。
+- **修改软件功能时尽可能用插件（新增或替换）实现**：以供分析。
+
+---
+
 DeepSeek Harness is a plugin-based agent harness on vendored Cordis: **everything is a plugin**. Read [docs/architecture.md](docs/architecture.md) before changing `packages/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
 
 ## Pre-release stance: foundation over blast radius

@@ -12,14 +12,27 @@ export type PluginFiberPhase =
   | 'unloading'
   | null
 
+/** One inventory row's kind: a Loader plugin entry or a discovered local skill. */
+export type PluginEntryKind = 'plugin' | 'skill'
+
 /** One non-group Loader entry exposed to trusted clients. */
 export interface PluginInventoryEntry {
   readonly entryId: PluginEntryId
-  /** Exact module specifier imported by the Loader entry. */
+  /** Exact module specifier imported by the Loader entry, or `skill:<name>` for skill rows. */
   readonly moduleName: string
-  /** Effective Loader enablement, including disabled ancestor groups. */
+  /** Row kind: Loader plugin or local skill. */
+  readonly kind: PluginEntryKind
+  /**
+   * The resolved plugin package's package.json description, or the skill's
+   * SKILL.md frontmatter description; undefined when neither resolves.
+   */
+  readonly description?: string
+  /** Effective enablement: Loader enablement for plugins, SKILL.md presence for skills. */
   readonly enabled: boolean
+  /** Root Fiber phase for plugin rows; always null for skill rows. */
   readonly fiberPhase: PluginFiberPhase
+  /** Absolute SKILL.md path for skill rows; absent for plugin rows. */
+  readonly path?: string
 }
 
 /** Point-in-time inventory returned by the plugin inventory Remote. */

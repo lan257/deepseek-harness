@@ -39,6 +39,7 @@
 | `@deepseek-ai/dsh-tool-subagent-report` | `report` | `ctx.subagents`、`ctx.systemPrompt`、`a live continuable in-process child Agent` | `tool/call`、`tool/result`、`a user-role message in the direct parent session` | - | 按可继续的进程内子级注册，而非全局注册，因此该 schema 仅在这种子级内部可见，并且不受其全局 `toolFilter` 影响。同一份贡献还会安装子级作用域的 `tool:report` 系统提示词 section，本目录不渲染该 section。面向父级的 `send_message` 工具单独安装。 |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`、`job_list`、`job_output` | `ctx.tools`、`ctx.jobs`、`ctx.systemPrompt` | `tool/call`、`tool/result`、`user/message via agent.inject() for background completion notices` | - | 与任务种类无关的后台任务控制器：后台 bash 命令、PTY 发送和 subagent 都通过相同的 3 个工具读取、列出和终止。加载该插件会挂接控制器，从而启用生产方的 `ctx.jobs.start()`。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
+| `@deepseek-ai/dsh-tool-vision` | `vision` | `ctx.tools`、运行随包 `scripts/vision.py` 的 `Config.pythonPath` 解释器 | `tool/call`、`tool/result` | - | vision 工具在脚本内部通过 opencode go 的 mimo-v2.5 识别本地图片，请求失败时自动切换配置。生成目录时无需 python：挂载只注册工具，执行时每次调用才启动脚本。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`、`web_search` | `ctx.tools`、`ctx.web`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | web_search 和 web_fetch 将提供方选择置于 ctx.web 之后，使模型可见 schema 在更换后端时保持稳定。 |
 
@@ -1732,6 +1733,45 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 来源：[`packages/todo/tool-todo/src/index.ts`](../packages/todo/tool-todo/src/index.ts)
 
 todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。
+
+<a id="deepseek-aidsh-tool-vision"></a>
+
+## `@deepseek-ai/dsh-tool-vision`
+
+### `vision`
+
+识图/OCR/看截图/UI 元素定位。输入本地图片路径、URL 或 dataURI，返回识别出的文字与画面描述；json_mode 时返回含像素坐标 bbox 的数组。当用户提供图片、截图、报错图、UI 图、设计稿，或需要读取图中文字时调用本工具，并把具体想从图中获取的信息写进 prompt。底层调用 opencode go 的 mimo-v2.5 多模态模型，请求失败时自动切换密钥配置重试。注意：本工具只识别已存在的图片，不会主动截屏。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "图片：本地绝对路径 / http(s):// URL / data: 数据 URI"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "提示词：具体说明要从图中获取什么（默认：逐字识别文字 + 像素坐标 bbox + 一句话概要）"
+    },
+    "json_mode": {
+      "type": "boolean",
+      "description": "true 时只输出 JSON 数组 [{text,bbox}]，供程序消费"
+    },
+    "model": {
+      "type": "string",
+      "description": "识图模型名（默认 mimo-v2.5）"
+    }
+  },
+  "required": [
+    "image"
+  ]
+}
+```
+
+来源：[`packages/vision/tool-vision/src/index.ts`](../packages/vision/tool-vision/src/index.ts)
+
+vision 工具在脚本内部通过 opencode go 的 mimo-v2.5 识别本地图片，请求失败时自动切换配置。生成目录时无需 python：挂载只注册工具，执行时每次调用才启动脚本。
 
 <a id="deepseek-aidsh-tool-workflow"></a>
 

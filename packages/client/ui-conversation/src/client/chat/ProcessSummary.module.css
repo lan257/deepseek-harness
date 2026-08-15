@@ -1,0 +1,6 @@
+/* Auto-collapsed process summary: one 24px disclosure row at the turn's
+   first tool-call position. Matches the flow-item min-width so the row never
+   outgrows the column; the DisclosureRow primitive owns the chrome. */
+.root {
+  min-width: 0;
+}

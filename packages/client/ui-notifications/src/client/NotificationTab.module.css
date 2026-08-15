@@ -1,0 +1,220 @@
+/* NotificationTab: the better-sidebar message-center content. Tokens come
+   from the shared --dsw-* alias sheet (dark-theme aware); no literal colors. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 12px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  /* Elevated-surface scrollbar: the rows sit on --dsw-alias-bg-layer-2, so
+     the thumb rebinds to the l2 pair (ui-theme scrollbar contract). */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.empty {
+  font-weight: 600;
+}
+
+.emptyDesc {
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.5;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.rowContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Unread rows carry a hairline accent so the badge's claim is visible in the list. */
+.row[data-unread] {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.rowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Kind glyph: a small status dot leading each row. */
+.glyph {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.glyph[data-kind='approval']:not([data-resolved]) {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.glyph[data-kind='approval'][data-resolved] {
+  background: var(--dsw-alias-label-dimmed);
+}
+
+.glyph[data-kind='completed'] {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.glyph[data-kind='failed'],
+.glyph[data-kind='agent-error'] {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.glyph[data-kind='killed'] {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.statusBadge {
+  flex: none;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statusBadge[data-status='completed'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.statusBadge[data-status='failed'],
+.statusBadge[data-status='agent-error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.statusBadge[data-status='killed'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.detail {
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.45;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.resolved {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.approvalReason {
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.reject,
+.allow {
+  flex: 1;
+  border-radius: 6px;
+  padding: 5px 0;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--dsw-alias-border-l3);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+}
+
+.reject:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.allow {
+  background: var(--dsw-alias-button-primary-fill);
+  border-color: transparent;
+  color: var(--dsw-alias-label-primary-inverted);
+}
+
+.allow:hover {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.reject:disabled,
+.allow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Tab icon: bell with a red unread badge, right-anchored. */
+.iconWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--dsw-alias-state-error-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}

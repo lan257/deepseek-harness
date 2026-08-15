@@ -117,6 +117,11 @@ const toolResult = (seq: number, callId: string, name = 'bash'): ToolResultNode 
   callTime: seq * 1_000 - 500,
   content: [], isError: false, callView: null, resultView: null, subCalls: [],
 })
+/** Settled tool node pinned to a turn, so the fixture gives it a turn-scoped location. */
+const settledTool = (seq: number, callId: string, turn: number, name = 'bash'): ConversationNode => ({
+  ...toolResult(seq, callId, name),
+  turn,
+} as ConversationNode)
 const runningCall = (callId: string, name = 'bash'): RunningToolCall => ({
   callId, name, argsRaw: `{"command":"cmd-${callId}"}`, turn: 2, step: 1, time: 1_000, callView: null, subCalls: [],
 })
@@ -295,7 +300,7 @@ function makeHarness(init?: Partial<ConversationSnapshot>) {
   const setSelection = (next: SelectionTarget | null): void => { chat.actions.select(next) }
   return {
     set, ChatView, props, openDetails, openFile, loadOlder, inspectCall,
-    chatScroll, forkAt, setSelection, toolOwners,
+    chatScroll, forkAt, setSelection, toolOwners, chat,
   }
 }
 
@@ -1353,5 +1358,136 @@ describe('ChatView', () => {
     const failedView = render(<failed.ChatView {...failed.props} />)
     expect(failedView.getByText('Compaction cancelled.')).toBeTruthy()
     expect(failedView.container.querySelector('[data-state="error"]')).not.toBeNull()
+  })
+})
+
+describe('ChatView — settled process auto-collapse', () => {
+  it('collapses a closed turn\'s settled tool calls into one summary row with the right count', () => {
+    const h = makeHarness({
+      nodes: [
+        user(1, 'do it'),
+        settledTool(3, 'a', 1),
+        settledTool(4, 'b', 1),
+        assistant(5, 'done', 1),
+      ],
+      turnEnds: new Map([[1, 5]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    const summary = view.getByRole('button', { name: '已执行 2 个工具调用' })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByTestId('tool-seat-a')).toBeNull()
+    expect(view.queryByTestId('tool-seat-b')).toBeNull()
+    expect(h.toolOwners).toHaveLength(0)
+    // The closing answer itself stays visible.
+    expect(view.getByText('done')).toBeTruthy()
+  })
+
+  it('hides mid-turn assistant narration of a closed turn, keeping only the final answer', () => {
+    const h = makeHarness({
+      nodes: [
+        user(1, 'do it'),
+        assistant(2, 'checking things', 1),
+        settledTool(3, 'a', 1),
+        assistant(4, 'final answer', 1),
+      ],
+      turnEnds: new Map([[1, 4]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.queryByText('checking things')).toBeNull()
+    expect(view.getByText('final answer')).toBeTruthy()
+    expect(view.getByRole('button', { name: '已执行 1 个工具调用' })).toBeTruthy()
+  })
+
+  it('keeps mid-turn narration visible while the turn is still open', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'do it'), assistant(2, 'checking things', 1), settledTool(3, 'a', 1)],
+      running: true,
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.getByText('checking things')).toBeTruthy()
+    expect(view.getByTestId('tool-seat-a')).toBeTruthy()
+  })
+
+  it('clicking the summary expands the cards and collapses them again', () => {
+    const h = makeHarness({
+      nodes: [
+        user(1, 'do it'),
+        settledTool(3, 'a', 1),
+        settledTool(4, 'b', 1),
+        assistant(5, 'done', 1),
+      ],
+      turnEnds: new Map([[1, 5]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    const summary = view.getByRole('button', { name: '已执行 2 个工具调用' })
+
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('true')
+    expect(view.getByTestId('tool-seat-a').textContent).toBe('bash:a')
+    expect(view.getByTestId('tool-seat-b').textContent).toBe('bash:b')
+    expect(h.toolOwners.map(owner => owner.callId)).toEqual(['a', 'b'])
+
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByTestId('tool-seat-a')).toBeNull()
+    expect(view.queryByTestId('tool-seat-b')).toBeNull()
+  })
+
+  it('keeps cards visible while the turn is open and collapses when it closes', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'do it'), settledTool(3, 'a', 1)],
+      running: true,
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.getByTestId('tool-seat-a')).toBeTruthy()
+    expect(view.queryByRole('button', { name: /工具调用/ })).toBeNull()
+
+    act(() => { h.set({ running: false, turnEnds: new Map([[1, 3]]) }) })
+    expect(view.queryByTestId('tool-seat-a')).toBeNull()
+    const summary = view.getByRole('button', { name: '已执行 1 个工具调用' })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('collapses only closed turns; a running turn keeps its cards beside a collapsed one', () => {
+    const h = makeHarness({
+      nodes: [
+        user(1, 'first'),
+        settledTool(3, 'a', 1),
+        assistant(4, 'one done', 1),
+        user(5, 'second'),
+        settledTool(6, 'b', 2),
+        assistant(7, 'two done', 2),
+      ],
+      turnEnds: new Map([[1, 4]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    // Turn 1 closed: one summary, no cards. Turn 2 open: its card stays.
+    expect(view.getByRole('button', { name: '已执行 1 个工具调用' })).toBeTruthy()
+    expect(view.queryByTestId('tool-seat-a')).toBeNull()
+    expect(view.getByTestId('tool-seat-b')).toBeTruthy()
+  })
+
+  it('leaves session-scoped tool nodes (no turn coordinate) untouched', () => {
+    const h = makeHarness({
+      nodes: [toolResult(3, 'a')],
+      turnEnds: new Map([[1, 3]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.getByTestId('tool-seat-a')).toBeTruthy()
+    expect(view.queryByRole('button', { name: /工具调用/ })).toBeNull()
+  })
+
+  it('treats a rehydrated store without the expansion field as all-collapsed', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'do it'), settledTool(3, 'a', 1), assistant(4, 'done', 1)],
+      turnEnds: new Map([[1, 4]]),
+    })
+    // A persisted snapshot from before the field rehydrates without it: the
+    // store still collapses (the empty fallback, not the per-turn map).
+    h.chat.store.set({ selection: null, draft: '', view: null, inspect: null })
+    const view = render(<h.ChatView {...h.props} />)
+    const summary = view.getByRole('button', { name: '已执行 1 个工具调用' })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByTestId('tool-seat-a')).toBeNull()
   })
 })

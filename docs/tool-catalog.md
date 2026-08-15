@@ -37,6 +37,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent-report` | `report` | `ctx.subagents`, `ctx.systemPrompt`, `a live continuable in-process child Agent` | `tool/call`, `tool/result`, `a user-role message in the direct parent session` | - | Registered per continuable in-process child rather than globally, so this schema is visible only inside such a child and survives its global `toolFilter`. The same contribution installs the child-scoped `tool:report` prompt section, which this catalog does not render. The parent-facing `send_message` tool is installed independently. |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
+| `@deepseek-ai/dsh-tool-vision` | `vision` | `ctx.tools`, `a python interpreter at Config.pythonPath running the bundled scripts/vision.py` | `tool/call`, `tool/result` | - | The vision tool recognizes local images through opencode go's mimo-v2.5 with automatic config failover inside the script. Schema harvest needs no python at catalog time: mounting only registers the tool, and execution spawns the script per call. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
 
@@ -1728,6 +1729,45 @@ Record and update a structured task list for the current work. Send the ENTIRE l
 Source: [`packages/todo/tool-todo/src/index.ts`](../packages/todo/tool-todo/src/index.ts)
 
 todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.
+
+<a id="deepseek-aidsh-tool-vision"></a>
+
+## `@deepseek-ai/dsh-tool-vision`
+
+### `vision`
+
+识图/OCR/看截图/UI 元素定位。输入本地图片路径、URL 或 dataURI，返回识别出的文字与画面描述；json_mode 时返回含像素坐标 bbox 的数组。当用户提供图片、截图、报错图、UI 图、设计稿，或需要读取图中文字时调用本工具，并把具体想从图中获取的信息写进 prompt。底层调用 opencode go 的 mimo-v2.5 多模态模型，请求失败时自动切换密钥配置重试。注意：本工具只识别已存在的图片，不会主动截屏。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "图片：本地绝对路径 / http(s):// URL / data: 数据 URI"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "提示词：具体说明要从图中获取什么（默认：逐字识别文字 + 像素坐标 bbox + 一句话概要）"
+    },
+    "json_mode": {
+      "type": "boolean",
+      "description": "true 时只输出 JSON 数组 [{text,bbox}]，供程序消费"
+    },
+    "model": {
+      "type": "string",
+      "description": "识图模型名（默认 mimo-v2.5）"
+    }
+  },
+  "required": [
+    "image"
+  ]
+}
+```
+
+Source: [`packages/vision/tool-vision/src/index.ts`](../packages/vision/tool-vision/src/index.ts)
+
+The vision tool recognizes local images through opencode go's mimo-v2.5 with automatic config failover inside the script. Schema harvest needs no python at catalog time: mounting only registers the tool, and execution spawns the script per call.
 
 <a id="deepseek-aidsh-tool-workflow"></a>
 

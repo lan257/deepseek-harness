@@ -4,14 +4,15 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { dirname, extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -183,6 +184,79 @@ async function durablePromptContent(ctx: Context, content: readonly PromptConten
       ...item.part.name === undefined ? {} : { name: item.part.name },
     })
     blocks.push({ type: 'image', attachment })
+  }
+  return blocks
+}
+
+/** Image media type to the file extension used for an exported prompt image. */
+const PROMPT_IMAGE_EXTENSIONS: Readonly<Record<ImageMediaType, string>> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+}
+
+/** Sanitize a browser file name into one safe path segment under the export root. */
+function safeExportedImageName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, '_').trim()
+  return cleaned === '' ? 'image' : cleaned.slice(0, 80)
+}
+
+/**
+ * Persist a text-only-route prompt's images as plain files below
+ * `$DSH_HOME/attachments/v1/exported/<sessionId>/` and project each into a
+ * path text block, so a text-only model can hand the path to the `vision` tool
+ * instead of receiving an image block its wire route cannot carry. Order and
+ * limits mirror `durablePromptContent`; every image is validated before any
+ * file is written.
+ * @param ctx - host context carrying the attachments service.
+ * @param content - the browser prompt parts.
+ * @param sessionId - the owning session, used in the export directory.
+ * @returns the durable message blocks: original text plus one path block per image.
+ */
+async function exportedPromptContent(
+  ctx: Context,
+  content: readonly PromptContentPart[],
+  sessionId: SessionId,
+): Promise<ContentBlock[]> {
+  const limits = ctx.attachments.imageLimits
+  if (content.filter(part => part.type === 'image').length > limits.maxImagesPerMessage) {
+    throw new AttachmentError('Prompt exceeds the configured image-count limit.', 'TOO_MANY_IMAGES')
+  }
+  const prepared = content.map(part => part.type === 'text'
+    ? part
+    : { part, data: decodeBase64(part.data) })
+  const images = prepared.filter((part): part is Extract<typeof part, { data: Uint8Array }> => 'data' in part)
+  const totalBytes = images.reduce((sum, image) => sum + image.data.byteLength, 0)
+  if (totalBytes > limits.maxMessageImageBytes) {
+    throw new AttachmentError('Prompt exceeds the configured aggregate image-byte limit.', 'IMAGES_TOO_LARGE')
+  }
+  for (const image of images) {
+    await ctx.attachments.validateImage({
+      data: image.data,
+      mediaType: image.part.mediaType,
+      ...image.part.name === undefined ? {} : { name: image.part.name },
+    })
+  }
+  const exportRoot = join(resolveDshHome(), 'attachments', 'v1', 'exported', String(sessionId))
+  await mkdir(exportRoot, { recursive: true })
+  const blocks: ContentBlock[] = []
+  let imageIndex = 0
+  for (const item of prepared) {
+    if (!('data' in item)) {
+      blocks.push({ type: 'text', text: item.text })
+      continue
+    }
+    imageIndex++
+    const baseName = item.part.name === undefined ? `image-${imageIndex}` : safeExportedImageName(item.part.name)
+    const extension = PROMPT_IMAGE_EXTENSIONS[item.part.mediaType]
+    const fileName = `${imageIndex}-${baseName}${extname(baseName) === '' ? extension : ''}`
+    const path = join(exportRoot, fileName)
+    await writeFile(path, item.data, { mode: 0o600 })
+    blocks.push({
+      type: 'text',
+      text: `[用户粘贴的图片已保存为文件：${path}。如需查看图片内容，请调用 vision 工具，将 image 参数设为该路径。]`,
+    })
   }
   return blocks
 }
@@ -2482,18 +2556,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const hasImage = content.some(part => part.type === 'image')
         const admit = async (): Promise<RpcResponse<{ accepted: true }>> => {
           try {
+            let durable: ContentBlock[]
             if (hasImage) {
               const current = selectionFor(agent).current
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
-              if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'attachment-error',
-                  message: `Model "${current.model}" does not support image input.`,
-                  details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
-                })
-              }
+              // A route that cannot carry image blocks still accepts the prompt:
+              // the images are exported as files and their paths ride the user
+              // message as text, so a text-only model can hand them to the vision tool.
+              durable = modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')
+                ? await exportedPromptContent(ctx, content, sessionId)
+                : await durablePromptContent(ctx, content)
+            } else {
+              durable = await durablePromptContent(ctx, content)
             }
-            const durable = await durablePromptContent(ctx, content)
             const message: UserMessage = createUserMessage({ content: durable, source })
             if (mode === 'steer') agent.steer(message)
             else agent.followup(message)

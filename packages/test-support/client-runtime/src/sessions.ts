@@ -8,6 +8,7 @@ import type {
   SessionListState, SessionProvideDescriptor, SessionSearchResultItem, SessionSummary, SnapshotStore,
   SubagentAddress,
 } from '@deepseek-ai/dsh-client-runtime/client'
+import type { RpcReceipt } from '@deepseek-ai/dsh-api-remotes/client'
 // The double reports the wire schema's own search bound, like the production
 // service — a transport-varying limit would be a fiction no client can see.
 import { SESSION_SEARCH_RESULT_LIMIT } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -421,6 +422,11 @@ export class TestSessions implements ISessions {
       draft.current = address.childSessionId
       draft.currentAddress = address
     })
+  }
+
+  /** No approval carrier exists on the bench: every answer is refused loudly. */
+  respondApproval(_key: string, _outcome: 'allowed-once' | 'rejected'): Promise<RpcReceipt> {
+    return Promise.reject(new Error('respondApproval is not supported by the test bench'))
   }
 
   /** Resolve the current fixture's retained catalog address. */

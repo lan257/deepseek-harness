@@ -38,3 +38,9 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+.agents/*
+
+# Local Windows shortcuts / quick-launch scripts
+dsh-gui-quick.bat
+dsh.lnk
+.dsh/*

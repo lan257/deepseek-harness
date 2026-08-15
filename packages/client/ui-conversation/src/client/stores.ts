@@ -11,6 +11,7 @@ type ChatActions = {
   setDraft: (draft: ChatStoreState, text: string) => void
   setView: (draft: ChatStoreState, view: string) => void
   setInspect: (draft: ChatStoreState, target: { callId: CallId } | null) => void
+  toggleProcessExpanded: (draft: ChatStoreState, turn: number) => void
 }
 
 /**
@@ -22,13 +23,23 @@ export function createChatStore(): EngineStoreHandle<ChatStoreState, ChatActions
     // Anchored to the contract shape: consumers read the store through
     // PropsStore<ChatStore>'s SnapshotSelectorHook<ChatStoreState>, so init
     // and the contract cannot drift.
-    init: (): ChatStoreState => ({ selection: null, draft: '', view: null, inspect: null }),
+    init: (): ChatStoreState => ({
+      selection: null, draft: '', view: null, inspect: null, expandedProcessTurns: {},
+    }),
     persist: 'dsh.conversation.chat',
     actions: {
       select: (d, target: SelectionTarget | null) => { d.selection = target },
       setDraft: (d, text: string) => { d.draft = text },
       setView: (d, view: string) => { d.view = view },
       setInspect: (d, target: { callId: CallId } | null) => { d.inspect = target },
+      // Expansion is the override: settled turns auto-collapse unless the
+      // reader expanded them, so the action flips one turn's flag.
+      toggleProcessExpanded: (d, turn: number) => {
+        d.expandedProcessTurns = {
+          ...d.expandedProcessTurns,
+          [turn]: !(d.expandedProcessTurns?.[turn] ?? false),
+        }
+      },
     },
   })
 }

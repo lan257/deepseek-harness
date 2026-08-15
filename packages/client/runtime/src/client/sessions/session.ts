@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
-  HistoryEntry, IApiClient, MessageId, MuxFrame, PromptContentPart, QueueAction, RpcError,
+  ApprovalRequestId, HistoryEntry, IApiClient, MessageId, MuxFrame, PromptContentPart, QueueAction, RpcError,
   RpcId, RpcResponse, RpcResult, SessionId, SubagentAddress, ToolEventView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
@@ -458,6 +458,21 @@ export class Session implements SessionFace {
   }
 
   // ---- Manager-only entry points (@internal; never called by the UI) ----
+
+  /**
+   * Manager-only lookup: the live approval wait for an audit correlation id,
+   * or undefined when no such wait is pending. The manager answers through
+   * the returned wait's respond(); an instantiated session without the wait
+   * falls through to the pre-instantiation buffer. The Session pending map
+   * keys waits by rpcId, so the lookup walks the map by payload approvalId.
+   * @param approvalId - the `approval/requested` frame's audit correlation.
+   */
+  pendingApproval(approvalId: ApprovalRequestId): PendingWait<'approval'> | undefined {
+    for (const wait of this.pending.values()) {
+      if (wait.kind === 'approval' && wait.payload.approvalId === approvalId) return wait
+    }
+    return undefined
+  }
 
   /**
    * Mux frame arrival (the dispatch switch).

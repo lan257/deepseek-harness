@@ -15,8 +15,9 @@
 
 - id: system-prompt
   config:
-    persona: >-
-      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+    persona: |-
+      你是一个由 {{model}} 模型驱动的编码智能体，工作目录是 {{cwd}}。
+      请始终使用中文进行内部思考（thinking），并默认用中文回复；代码、命令、文件路径和专有名词保留原文。
 
 # TODO: Re-enable shared HMR for Web after its reload lifecycle is tested.
 - id: hmr
@@ -269,6 +270,11 @@
 
     - id: ui-user-questions
       name: '@deepseek-ai/dsh-client-ui-user-questions'
+
+    # Cross-session approval center: a better-sidebar tab (optional host)
+    # that answers pending approvals from any session without switching.
+    - id: ui-notifications
+      name: '@deepseek-ai/dsh-client-ui-notifications'
 
     - id: ui-trajectory
       name: '@deepseek-ai/dsh-client-ui-trajectory'

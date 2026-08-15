@@ -37,6 +37,16 @@ pre-commit:
     - name: vendor manifest guard
       run: scripts/check-vendor-manifest.sh
 
+    # Full repository test suite batched at commit time (workflow: no mid-task
+    # full-suite runs; commit is the unified test checkpoint). Doc-only commits
+    # skip it via the glob. This machine carries ~50 pre-existing
+    # Windows-environmental failures (symlink EPERM, real-API, oxlint/pwsh/git
+    # probes); review the output and use `git commit --no-verify` only when every
+    # failure is a known environmental one.
+    - name: repository tests (staged code)
+      glob: '{package.json,pnpm-lock.yaml,*.ts,*.tsx,packages/**/*.ts,packages/**/*.tsx,apps/**/*.ts,apps/**/*.tsx,examples/**/*.ts,examples/**/*.tsx,scripts/**/*.ts,scripts/**/*.tsx}'
+      run: pnpm run test
+
 pre-merge-commit:
   jobs:
     - name: translation pairing (staged records)
@@ -53,3 +63,8 @@ pre-push:
   jobs:
     - name: typecheck
       run: pnpm run typecheck
+
+    # The per-file 100% coverage gate — the repository's CI checkpoint — runs
+    # before push instead of mid-task. Heavy (~13 min); remove if too slow.
+    - name: coverage gate
+      run: pnpm run test:coverage

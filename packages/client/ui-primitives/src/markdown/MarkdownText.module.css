@@ -171,10 +171,59 @@
   accent-color: var(--dsw-alias-label-secondary);
 }
 
+/* The frame owns the table's geometry: it bounds height and width so a long
+   or wide table scrolls in place (the horizontal scrollbar stays at the
+   bottom of the bounded viewport), and it positions the width-resize handle
+   over the scroll viewport's right edge. */
+.tableFrame {
+  position: relative;
+  min-width: 0;
+}
+
 .tableScroll {
   max-width: 100%;
-  overflow-x: auto;
+  max-height: min(480px, 60vh);
+  overflow: auto;
   overscroll-behavior-x: contain;
+}
+
+/* The width-resize handle overlays the scroll viewport's right edge; the
+   frame hover or handle focus reveals the grip. Hidden entirely on coarse
+   pointers so touch panning at the edge is not intercepted. */
+.tableResizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  opacity: 0;
+  z-index: 2;
+}
+
+.tableResizeHandle::before {
+  content: '';
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l3);
+}
+
+.tableFrame:hover .tableResizeHandle,
+.tableResizeHandle:focus-visible,
+.tableResizeHandle:active,
+.tableResizeDragging {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .tableResizeHandle {
+    display: none;
+  }
 }
 
 .tableScroll table {

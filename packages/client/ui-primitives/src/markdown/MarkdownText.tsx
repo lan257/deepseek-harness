@@ -20,15 +20,18 @@ import {
   wrapBlockChildren,
 } from './render.tsx'
 import type { MarkdownCodeLabels, MarkdownFileMentions, MarkdownRenderContext, ReferenceTargets } from './render.tsx'
+import type { MarkdownTableLabels } from './TableBlock.tsx'
 import 'katex/dist/katex.min.css'
 import css from './MarkdownText.module.css'
 
 export type { MarkdownCodeLabels, MarkdownFileMentions } from './render.tsx'
+export type { MarkdownTableLabels } from './TableBlock.tsx'
 
 /** One settled full render: parse with math, resolve references, append the footnote section. */
 function renderSettled(
   text: string,
   codeLabels: MarkdownCodeLabels | undefined,
+  tableLabels: MarkdownTableLabels | undefined,
   fileMentions: MarkdownFileMentions | undefined,
 ): ReactNode[] {
   const root = parseGfmWithMath(text)
@@ -37,6 +40,7 @@ function renderSettled(
   const context: MarkdownRenderContext = {
     streaming: false,
     codeLabels,
+    tableLabels,
     fileMentions,
     targets,
     footnoteOrder: [],
@@ -67,8 +71,12 @@ class StreamingRenderer {
   private lastText: string | null = null
   private lastRendered: ReactNode[] = []
 
-  /** @param codeLabels - Fence copy labels baked into cached elements; the owner replaces the renderer when they change. */
-  constructor(private readonly codeLabels: MarkdownCodeLabels | undefined) {}
+  /** @param codeLabels - Fence copy labels baked into cached elements; the owner replaces the renderer when they change.
+   * @param tableLabels - Table resize-handle copy baked into cached elements; same replacement rule. */
+  constructor(
+    private readonly codeLabels: MarkdownCodeLabels | undefined,
+    private readonly tableLabels: MarkdownTableLabels | undefined,
+  ) {}
 
   /**
    * Render the current accumulated text. Idempotent per text value, so React
@@ -101,6 +109,7 @@ class StreamingRenderer {
       const frozenContext: MarkdownRenderContext = {
         streaming: true,
         codeLabels: this.codeLabels,
+        tableLabels: this.tableLabels,
         fileMentions: undefined,
         targets: frameTargets,
         footnoteOrder: this.frozenFootnoteOrder,
@@ -119,6 +128,7 @@ class StreamingRenderer {
     const tailContext: MarkdownRenderContext = {
       streaming: true,
       codeLabels: this.codeLabels,
+      tableLabels: this.tableLabels,
       fileMentions: undefined,
       targets: frameTargets,
       footnoteOrder: [...this.frozenFootnoteOrder],
@@ -144,33 +154,38 @@ class StreamingRenderer {
  * the finalize swap) and parses incrementally across chunks; `codeLabels`
  * forwards localized copy-button labels to fence CodeBlocks — pass a
  * reference-stable object (memoized per locale revision), because a new
- * identity discards the streaming render cache mid-message. `fileMentions`
- * links inline-code tokens its resolver recognizes as real files; this is
- * the single streaming gate — it applies to settled renders only, because a
- * streaming message's vocabulary is not final and frozen cached elements
- * must not bake in handlers that could go stale.
+ * identity discards the streaming render cache mid-message. `tableLabels`
+ * forwards localized width-resize-handle copy to tables with the same
+ * reference-stability rule. `fileMentions` links inline-code tokens its
+ * resolver recognizes as real files; this is the single streaming gate — it
+ * applies to settled renders only, because a streaming message's vocabulary
+ * is not final and frozen cached elements must not bake in handlers that
+ * could go stale.
  * @returns A GFM document with TeX math rendered through KaTeX; raw HTML,
  * relative links, and unsafe protocols are disabled, while absolute HTTP(S)
  * images render directly.
  */
-export const MarkdownText = memo(function MarkdownText({ text, streaming = false, codeLabels, fileMentions }: {
+export const MarkdownText = memo(function MarkdownText({ text, streaming = false, codeLabels, tableLabels, fileMentions }: {
   text: string
   streaming?: boolean
   codeLabels?: MarkdownCodeLabels | undefined
+  tableLabels?: MarkdownTableLabels | undefined
   fileMentions?: MarkdownFileMentions | undefined
 }) {
   const streamRef = useRef<StreamingRenderer | null>(null)
   const streamLabelsRef = useRef<MarkdownCodeLabels | undefined>(codeLabels)
+  const streamTableLabelsRef = useRef<MarkdownTableLabels | undefined>(tableLabels)
   const children = useMemo(() => {
     if (!streaming) {
       streamRef.current = null
-      return renderSettled(text, codeLabels, fileMentions)
+      return renderSettled(text, codeLabels, tableLabels, fileMentions)
     }
-    if (streamRef.current === null || streamLabelsRef.current !== codeLabels) {
-      streamRef.current = new StreamingRenderer(codeLabels)
+    if (streamRef.current === null || streamLabelsRef.current !== codeLabels || streamTableLabelsRef.current !== tableLabels) {
+      streamRef.current = new StreamingRenderer(codeLabels, tableLabels)
       streamLabelsRef.current = codeLabels
+      streamTableLabelsRef.current = tableLabels
     }
     return streamRef.current.render(text)
-  }, [text, streaming, codeLabels, fileMentions])
+  }, [text, streaming, codeLabels, tableLabels, fileMentions])
   return <div className={css.markdown}>{children}</div>
 })

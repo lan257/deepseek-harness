@@ -1,11 +1,13 @@
 <div class="_markdown_404681">
-  <div class="_tableScroll_404681">
-    <table>
-      <thead>
-        <tr>
-          <th>
-            #text "a"
-          <th>
-            #text "b"
+  <div class="_tableFrame_404681">
+    <div class="_tableScroll_404681">
+      <table>
+        <thead>
+          <tr>
+            <th>
+              #text "a"
+            <th>
+              #text "b"
+    <div aria-label="调整表格宽度" aria-orientation="vertical" class="_tableResizeHandle_404681" role="separator" tabindex="0" title="拖动调整宽度，双击恢复默认">
   <p>
     #text "after"

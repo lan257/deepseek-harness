@@ -58,6 +58,7 @@ import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSessionQuery from '@deepseek-ai/dsh-tool-session-query'
 import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
+import * as ToolVision from '@deepseek-ai/dsh-tool-vision'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import VmWorkflowEngine from '@deepseek-ai/dsh-workflow-worker-thread'
@@ -517,6 +518,18 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-vision',
+    dir: 'tool-vision',
+    source: 'packages/vision/tool-vision/src/index.ts',
+    requires: ['ctx.tools', 'a python interpreter at Config.pythonPath running the bundled scripts/vision.py'],
+    writes: ['tool/call', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(ToolVision, { pythonPath: 'python', scriptPath: '', timeoutMs: 180000, defaultModel: 'mimo-v2.5' })
+    },
+    note:
+      'The vision tool recognizes local images through opencode go\'s mimo-v2.5 with automatic config failover inside the script. Schema harvest needs no python at catalog time: mounting only registers the tool, and execution spawns the script per call.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-workflow',

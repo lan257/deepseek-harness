@@ -12,16 +12,20 @@
 // ChatNodeSeat subscribes to one Node key, so Assistant deltas and Tool
 // lifecycle updates replace only their own row without remounting it.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationTimelineSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
+import { isSettledTool, nodeTurn, type ChatNode } from '../contract/chat-nodes.ts'
 import { PendingSteeringBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
+import { ProcessSummary } from './ProcessSummary.tsx'
 import { formatRunDuration } from './message-chrome.ts'
 import css from './ChatView.module.css'
 
 const FOLLOW_THRESHOLD = 24
+/** Stable empty expansion ledger for rehydrated persisted snapshots lacking the field. */
+const EMPTY_PROCESS_TURNS: Readonly<Record<number, boolean>> = {}
 
 /** Active column host when present; otherwise the view-local scroller. */
 function scrollerOf(from: HTMLElement): HTMLElement {
@@ -144,7 +148,7 @@ function TurnStatus({ startTime, t }: {
  * ordered business Node crosses the keyed renderer seat.
  */
 export function ChatView({
-  useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt,
+  useSession, useSessions, useStore, actions, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt,
   fileMentions, t,
 }: ChatViewSlotProps) {
   const order = useSession(s => s.chat.order)
@@ -159,6 +163,7 @@ export function ChatView({
   const hasMore = useSession(s => s.hasMore)
   const loadingOlder = useSession(s => s.loadingOlder)
   const selectedCallId = useStore(s => s.selection?.callId)
+  const expandedProcessTurns = useStore(s => s.expandedProcessTurns ?? EMPTY_PROCESS_TURNS)
 
   const pendingSteering = useMemo(
     () => inbox.filter(item => item.placement === 'steering'),
@@ -379,22 +384,84 @@ export function ChatView({
               </button>
             </div>
           )}
-          {order.map(nodeKey => (
-            <ChatNodeSeat
-              key={nodeKey}
-              nodeKey={nodeKey}
-              useSession={useSession}
-              selectedCallId={selectedCallId}
-              cwd={cwd}
-              openFile={openFile}
-              inspectCall={inspectCall}
-              forkAt={forkAt}
-              loadImage={loadImage}
-              fileMentions={fileMentions}
-              renderSlot={renderSlot}
-              t={t}
-            />
-          ))}
+          {/* Settled turns auto-collapse their working process: tool calls
+              fold into one disclosure row at the first call's position and
+              mid-turn assistant narration (progress prose plus reasoning)
+              hides entirely, leaving the final answer — the full process stays
+              reachable in the trajectory view. Running calls and expanded
+              turns keep their cards. The per-turn flag rides the shared chat
+              store (expansion survives view switches). */}
+          {(() => {
+            const summarizedTurns = new Set<number>()
+            // Per-turn largest settled assistant seq: the closing answer every
+            // earlier assistant-step of a closed turn is folded against.
+            const finalAssistantSeqs = new Map<number, number>()
+            for (const key of order) {
+              const candidate = nodeStore.get(key) as ChatNode | undefined
+              if (candidate?.kind !== 'assistant-step') continue
+              const seq = candidate.data.finalNode?.seq
+              if (seq === undefined) continue
+              const turn = nodeTurn(candidate)
+              if (turn === undefined) continue
+              const previous = finalAssistantSeqs.get(turn) ?? 0
+              if (seq > previous) finalAssistantSeqs.set(turn, seq)
+            }
+            return order.map((nodeKey) => {
+              const node = nodeStore.get(nodeKey) as ChatNode | undefined
+              const seat = (
+                <ChatNodeSeat
+                  key={nodeKey}
+                  nodeKey={nodeKey}
+                  useSession={useSession}
+                  selectedCallId={selectedCallId}
+                  cwd={cwd}
+                  openFile={openFile}
+                  inspectCall={inspectCall}
+                  forkAt={forkAt}
+                  loadImage={loadImage}
+                  fileMentions={fileMentions}
+                  renderSlot={renderSlot}
+                  t={t}
+                />
+              )
+              if (node?.kind === 'assistant-step') {
+                const turn = nodeTurn(node)
+                const seq = node.data.finalNode?.seq
+                const closingSeq = turn === undefined ? undefined : finalAssistantSeqs.get(turn)
+                // The turn's closed status is the timeline's (turn/end), not
+                // the step's: a settled step closes mid-turn while the agent
+                // keeps working, and only turn end marks the process as done.
+                if (turn !== undefined && seq !== undefined && closingSeq !== undefined
+                  && timeline.turns.get(turn)?.status === 'closed'
+                  && seq !== closingSeq) {
+                  return null
+                }
+                return seat
+              }
+              if (node?.kind !== 'tool-call') return seat
+              const turn = nodeTurn(node)
+              if (turn === undefined || timeline.turns.get(turn)?.status !== 'closed' || !isSettledTool(node.data.root)) return seat
+              const expanded = expandedProcessTurns[turn] === true
+              const first = !summarizedTurns.has(turn)
+              summarizedTurns.add(turn)
+              if (!first && !expanded) return null
+              return (
+                <Fragment key={`process:${turn}:${nodeKey}`}>
+                  {first && (
+                    <ProcessSummary
+                      key={`process:${turn}`}
+                      turn={turn}
+                      expanded={expanded}
+                      onToggle={() => { actions.toggleProcessExpanded(turn) }}
+                      useSession={useSession}
+                      t={t}
+                    />
+                  )}
+                  {expanded && seat}
+                </Fragment>
+              )
+            })
+          })()}
           {/* No pending placeholders: questions (ui-user-questions) and approvals
               (ApprovalPanel) both take over the composer, so a flow card would
               double-render the same wait. */}

@@ -30,6 +30,7 @@
         - math: θ
       - cell:
         - math: 1 5
+- separator "Adjust table width"
 - paragraph: MATH_RENDERING_DONE
 - button "Copy":
   - img

@@ -1208,3 +1208,155 @@ describe('background-job mirror', () => {
     expect(seen).toHaveBeenCalled()
   })
 })
+
+describe('approval center', () => {
+  const approvalFrame = (sessionId: SessionId, approvalId: string, over: Partial<{ callId: string; reason: string }> = {}) =>
+    ({ rpcId: `r:${approvalId}` as never, payload: { type: 'approval/requested', sessionId, approvalId: approvalId as never, toolName: 'bash', ...over } as never })
+  const resolvedFrame = (sessionId: SessionId, approvalId: string) =>
+    ({ rpcId: 'x' as never, payload: { type: 'approval/resolved', sessionId, approvalId: approvalId as never, outcome: 'allowed-once' } as never })
+
+  it('aggregates pending approvals across sessions, instantiated or not, with their domain fields', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1', { reason: 'needs write' }))
+    manager.handleMuxEnvelope(approvalFrame(S2, 'ap2', { callId: 'c1' }))
+    manager.get(S1) // instantiate one session; the other stays buffered
+    const view = manager.getListSnapshot().pendingApprovals
+    expect(view).toEqual([
+      expect.objectContaining({ sessionId: S1, approvalId: 'ap1', toolName: 'bash', reason: 'needs write', key: 'a:ap1' }),
+      expect.objectContaining({ sessionId: S2, approvalId: 'ap2', callId: 'c1', key: 'a:ap2' }),
+    ])
+  })
+
+  it('drops the entry when the resolved frame lands', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    expect(manager.getListSnapshot().pendingApprovals).toHaveLength(1)
+    manager.handleMuxEnvelope(resolvedFrame(S1, 'ap1'))
+    expect(manager.getListSnapshot().pendingApprovals).toEqual([])
+  })
+
+  it('answers through the live Session wait when the session is instantiated', async () => {
+    const api = new FakeApiClient()
+    const manager = new SessionManager(api, fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    manager.get(S1)
+    const receipt = await manager.respondApproval('a:ap1', 'allowed-once')
+    expect(receipt.accepted).toBe(true)
+    const sent = api.callsOf('respond').at(-1) as { rpcId: unknown; result: { value: unknown } }
+    expect(sent.result.value).toEqual({ sessionId: S1, approvalId: 'ap1', outcome: 'allowed-once' })
+  })
+
+  it('answers through the buffered envelope for a session never instantiated', async () => {
+    const api = new FakeApiClient()
+    const manager = new SessionManager(api, fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    await manager.respondApproval('a:ap1', 'rejected')
+    const sent = api.callsOf('respond').at(-1) as { rpcId: string; result: { value: unknown } }
+    expect(sent.rpcId).toBe('r:ap1') // the requested frame's stable id, echoed verbatim
+    expect(sent.result.value).toEqual({ sessionId: S1, approvalId: 'ap1', outcome: 'rejected' })
+  })
+
+  it('answers a buffered approval after instantiation clears the buffer (the wait owns the carrier)', async () => {
+    const api = new FakeApiClient()
+    const manager = new SessionManager(api, fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    manager.get(S1) // replay drains the buffer into the Session pending map
+    await manager.respondApproval('a:ap1', 'allowed-once')
+    const sent = api.callsOf('respond').at(-1) as { rpcId: string; result: { value: unknown } }
+    expect(sent.result.value).toEqual({ sessionId: S1, approvalId: 'ap1', outcome: 'allowed-once' })
+  })
+
+  it('throws for an unknown key and for a resolved-then-answered request', async () => {
+    const api = new FakeApiClient()
+    const manager = new SessionManager(api, fakeRemote())
+    await expect(manager.respondApproval('a:nope', 'allowed-once')).rejects.toThrow('no pending approval')
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    manager.handleMuxEnvelope(resolvedFrame(S1, 'ap1'))
+    await expect(manager.respondApproval('a:ap1', 'allowed-once')).rejects.toThrow('no pending approval')
+  })
+
+  it('drops the views on session removal and on disconnect (replay re-adds still-pending)', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S1, 'ap1'))
+    manager.handleHostEnvelope({ rpcId: 'h' as never, payload: { type: 'host/session-removed', sessionId: S1 } })
+    expect(manager.getListSnapshot().pendingApprovals).toEqual([])
+    manager.handleMuxEnvelope(approvalFrame(S2, 'ap2'))
+    manager.handleDisconnected()
+    expect(manager.getListSnapshot().pendingApprovals).toEqual([])
+  })
+})
+
+describe('notification center', () => {
+  const approvalFrame = (sessionId: SessionId, approvalId: string, over: Partial<{ callId: string; reason: string }> = {}) =>
+    ({ rpcId: `r:${approvalId}` as never, payload: { type: 'approval/requested', sessionId, approvalId: approvalId as never, toolName: 'bash', ...over } as never })
+  const resolvedFrame = (sessionId: SessionId, approvalId: string) =>
+    ({ rpcId: 'x' as never, payload: { type: 'approval/resolved', sessionId, approvalId: approvalId as never, outcome: 'allowed-once' } as never })
+  const jobsFrame = (sessionId: SessionId, jobs: unknown[]) =>
+    ({ rpcId: 't' as never, payload: { type: 'session/jobs', sessionId, jobs } as never })
+  const jobView = (over: Partial<{ id: string; status: string; label: string }> = {}) => ({
+    id: 'bash-1', kind: 'bash', label: 'pnpm run build', status: 'running', startedAt: 5, ...over,
+  })
+  const running = (id = 'bash-1', label = 'pnpm run build') => jobView({ id, status: 'running', label })
+  const settled = (id = 'bash-1', status = 'completed', label = 'pnpm run build') => jobView({ id, status, label })
+
+  it('notifies on running→settled job migrations, once per job', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(jobsFrame(S1, [running()])) // baseline: no notification
+    expect(manager.getListSnapshot().notifications ?? []).toEqual([])
+    manager.handleMuxEnvelope(jobsFrame(S1, [settled()]))
+    const feed = manager.getListSnapshot().notifications!
+    expect(feed).toHaveLength(1)
+    expect(feed[0]).toMatchObject({ id: 'job:bash-1', sessionId: S1, kind: 'job-settled', status: 'completed', detail: 'pnpm run build' })
+    // The same settled snapshot repeats without a second notification.
+    manager.handleMuxEnvelope(jobsFrame(S1, [settled()]))
+    expect(manager.getListSnapshot().notifications).toHaveLength(1)
+  })
+
+  it('notifies failed and killed settlements with their labels', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(jobsFrame(S1, [running('bash-1', 'a'), running('bash-2', 'b')]))
+    manager.handleMuxEnvelope(jobsFrame(S1, [settled('bash-1', 'failed', 'a'), settled('bash-2', 'killed', 'b')]))
+    const feed = manager.getListSnapshot().notifications!
+    expect(feed.map(n => [n.status, n.detail])).toEqual([
+      ['killed', 'b'],
+      ['failed', 'a'],
+    ])
+  })
+
+  it('keeps approval notifications actionable and marks them resolved', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(approvalFrame(S2, 'ap1', { reason: 'needs write' }))
+    const feed = manager.getListSnapshot().notifications!
+    expect(feed[0]).toMatchObject({ id: 'approval:a:ap1', sessionId: S2, kind: 'approval' })
+    expect(feed[0]?.approval?.reason).toBe('needs write')
+    manager.handleMuxEnvelope(resolvedFrame(S2, 'ap1'))
+    expect(manager.getListSnapshot().notifications![0]).toMatchObject({ kind: 'approval', resolved: true })
+  })
+
+  it('notifies agent errors with the message', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleHostEnvelope({ rpcId: 'e' as never, payload: { type: 'host/agent-error', sessionId: S1, message: 'boom' } })
+    expect(manager.getListSnapshot().notifications![0]).toMatchObject({
+      kind: 'agent-error', sessionId: S1, detail: 'boom',
+    })
+  })
+
+  it('drops a removed session\'s notifications and caps the feed', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope(jobsFrame(S1, [running()]))
+    manager.handleMuxEnvelope(jobsFrame(S1, [settled()]))
+    manager.handleHostEnvelope({ rpcId: 'r' as never, payload: { type: 'host/session-removed', sessionId: S1 } })
+    expect(manager.getListSnapshot().notifications ?? []).toEqual([])
+    // Cap: fifty entries max, newest kept.
+    for (let i = 0; i < 60; i++) {
+      manager.handleHostEnvelope({
+        rpcId: `e${i}` as never,
+        payload: { type: 'host/agent-error', sessionId: S2, message: `err ${i}` },
+      })
+    }
+    const capped = manager.getListSnapshot().notifications!
+    expect(capped).toHaveLength(50)
+    expect(capped[0]?.detail).toBe('err 59')
+    expect(capped.some(n => n.detail === 'err 8')).toBe(false)
+  })
+})

@@ -80,3 +80,14 @@ export function isSettledTool(block: ToolCallBlock): block is Extract<ToolCallBl
 export function isRunningTool(block: ToolCallBlock): block is RunningToolCall {
   return !isSettledTool(block)
 }
+
+/**
+ * Turn coordinate of a Chat Node's location, when it carries one.
+ * @param node - final Chat render unit.
+ * @returns the owning turn number, or undefined for session-scoped nodes.
+ */
+export function nodeTurn(node: ChatConversationViewNode): number | undefined {
+  return node.location.kind === 'turn' || node.location.kind === 'step'
+    ? node.location.turn.turn
+    : undefined
+}

@@ -108,7 +108,7 @@ describe('minimal agent preset', () => {
         "editor": "Here's the content of {{cwd}}/preset-smoke.txt with line numbers (which has a total of 2 lines):
            1  MINIMAL_EDITOR_OK
            2",
-        "prompt": "You are a helpful software engineer assistant.",
+        "prompt": "你是一个乐于助人的软件工程师助手。请始终使用中文进行内部思考（thinking），并默认用中文回复；代码、命令、文件路径和专有名词保留原文。",
         "tools": [
           "bash",
           "str_replace_editor",

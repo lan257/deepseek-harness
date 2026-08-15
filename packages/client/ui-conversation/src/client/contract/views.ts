@@ -29,4 +29,11 @@ export interface ChatStoreState {
    * persisted snapshots from before this field rehydrate without it.
    */
   inspect: { callId: CallId } | null
+  /**
+   * Turns whose settled tool-call process the reader expanded past the
+   * auto-collapsed summary. Absent turns stay collapsed (the default); the
+   * field itself is optional because persisted snapshots from before this
+   * field rehydrate without it.
+   */
+  expandedProcessTurns?: Readonly<Record<number, boolean>>
 }
